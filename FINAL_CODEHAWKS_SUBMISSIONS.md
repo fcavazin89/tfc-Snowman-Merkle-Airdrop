@@ -2,295 +2,147 @@
 
 ---
 
-## Submission Details: [H-01] Unrestricted NFT Minting in Snowman.sol
+## [H-01] Unrestricted NFT Minting in Snowman.sol
 
-### Title
-Unrestricted NFT Minting in Snowman.sol
-
-### Impact
-High
-
-### Likelihood
-High
-
-### Scope
-`src/Snowman.sol`
-
-### Description
-
-**Normal behavior:**
-NFTs should only be minted by the `SnowmanAirdrop` contract after verifying Merkle proofs and signatures.
-
-**Specific issue or problem:**
-`Snowman::mintSnowman()` lacks access control. Any external caller can mint unlimited NFTs without staking, bypassing the protocol's core mechanics.
+**Description:** `Snowman::mintSnowman()` lacks access control. Any address can mint unlimited NFTs without staking, bypassing protocol mechanics.
 
 ```solidity
-// src/Snowman.sol
-    // @> Vulnerability: External function without access control
-    function mintSnowman(address receiver, uint256 amount) external {
-        for (uint256 i = 0; i < amount; i++) {
-            _safeMint(receiver, s_TokenCounter);
-            s_TokenCounter++;
-        }
+function mintSnowman(address receiver, uint256 amount) external { // @> No access control
+    for (uint256 i = 0; i < amount; i++) {
+        _safeMint(receiver, s_TokenCounter);
+        s_TokenCounter++;
     }
+}
 ```
 
-### Risk
-Likelihood: High - No costs or conditions are required to execute the attack.
+**Risk:** High (Likelihood: High / Impact: High). Infinite inflation destroys NFT value and renders staking useless.
 
-Impact: High - Infinite inflation destroys the NFT's value and renders the staking system useless.
-
-### Proof of Concept
-The following test demonstrates that an unauthorized attacker can mint 100 NFTs for free, bypassing all staking requirements:
-
+**Proof of Concept:** An unauthorized attacker mints 100 NFTs for free:
 ```solidity
-function testFinding1_UnrestrictedMinting() public {
-    address attacker = makeAddr("attacker");
+function testExploit() public {
     vm.prank(attacker);
     nft.mintSnowman(attacker, 100);
     assert(nft.balanceOf(attacker) == 100);
 }
 ```
 
-### Recommended Mitigation
-Implement the `onlyAirdrop` modifier to restrict minting to the authorized airdrop contract only.
-
+**Recommended Mitigation:** Restrict `mintSnowman` to the authorized airdrop contract via a modifier.
 ```diff
-+ address public s_airdropContract;
-+ modifier onlyAirdrop() {
-+     if (msg.sender != s_airdropContract) revert SM__NotAllowed();
-+     _;
-+ }
-- function mintSnowman(address receiver, uint256 amount) external {
-+ function mintSnowman(address receiver, uint256 amount) external onlyAirdrop {
++ modifier onlyAirdrop() { if (msg.sender != s_airdropContract) revert(); _; }
+- function mintSnowman(...) external {
++ function mintSnowman(...) external onlyAirdrop {
 ```
 
 ---
 
-## Submission Details: [H-02] Unconsistent `MESSAGE_TYPEHASH` with EIP-712 declaration
+## [H-02] MESSAGE_TYPEHASH Typo Breaks EIP-712 Signatures
 
-### Title
-Unconsistent `MESSAGE_TYPEHASH` with EIP-712 declaration on contract `SnowmanAirdrop`
-
-### Impact
-High
-
-### Likelihood
-High
-
-### Scope
-`src/SnowmanAirdrop.sol`
-
-### Description
-
-**Normal behavior:**
-The `MESSAGE_TYPEHASH` must match the standard EIP-712 declaration used by the frontend to ensure valid signature verification.
-
-**Specific issue or problem:**
-A typo exists in the `MESSAGE_TYPEHASH`. The word `address` is misspelled as `addres`.
+**Description:** `MESSAGE_TYPEHASH` misspells `address` as `addres`, causing all standard frontend signatures to fail verification.
 
 ```solidity
-// src/SnowmanAirdrop.sol:49
-// @> Vulnerability: 'addres' misspelled
+// @> typo 'addres'
 bytes32 private constant MESSAGE_TYPEHASH = keccak256("SnowmanClaim(addres receiver, uint256 amount)");
 ```
 
-### Risk
-Likelihood: High - The typo is hardcoded; all standard frontend signatures will fail verification.
+**Risk:** High (Likelihood: High / Impact: High). Signature-based claims are permanently broken.
 
-Impact: High - Signature-based claims are completely broken.
-
-### Proof of Concept
-This test confirms the mismatch between the contract's typehash and the standard EIP-712 format, which causes `ecrecover` to fail for valid signatures:
-
+**Proof of Concept:** The contract's hash differs from the standard EIP-712 format used by wallets:
 ```solidity
-    function testFrontendSignatureVerification() public {
-        bytes32 CORRECT_TYPEHASH = keccak256("SnowmanClaim(address receiver, uint256 amount)");
-        bytes32 contractTypeHash = airdrop.getMessageHash(alice);
-        assertFalse(CORRECT_TYPEHASH == contractTypeHash, "Mismatch due to typo");
-    }
+function testTypo() public {
+    bytes32 CORRECT = keccak256("SnowmanClaim(address receiver, uint256 amount)");
+    assertFalse(CORRECT == airdrop.getMessageHash(alice));
+}
 ```
 
-### Recommended Mitigation
-Fix the typo in the type hash to align with standard EIP-712 implementations.
-
+**Recommended Mitigation:** Fix the spelling of `address` in the type hash constant.
 ```diff
-- bytes32 private constant MESSAGE_TYPEHASH = keccak256("SnowmanClaim(addres receiver, uint256 amount)");
-+ bytes32 private constant MESSAGE_TYPEHASH = keccak256("SnowmanClaim(address receiver, uint256 amount)");
+- keccak256("SnowmanClaim(addres receiver, uint256 amount)");
++ keccak256("SnowmanClaim(address receiver, uint256 amount)");
 ```
 
 ---
 
-## Submission Details: [M-01] DoS to a user trying to claim a Snowman
+## [M-01] DoS via Balance Manipulation (Front-running)
 
-### Title
-DoS to a user trying to claim a Snowman via balance manipulation
-
-### Impact
-High
-
-### Likelihood
-Medium
-
-### Scope
-`src/SnowmanAirdrop.sol`
-
-### Description
-
-**Normal behavior:**
-Users should sign a message for a fixed claim amount that remains valid regardless of minor balance changes.
-
-**Specific issue or problem:**
-Verification relies on `i_snow.balanceOf(receiver)`. An attacker can front-run a claim by sending 1 wei of Snow to the receiver, changing their balance and invalidating their signature.
+**Description:** `getMessageHash` uses dynamic `balanceOf(receiver)`. An attacker can front-run a claim by sending 1 wei to the user, invalidating their signature.
 
 ```solidity
-// src/SnowmanAirdrop.sol
-  function getMessageHash(address receiver) public view returns (bytes32) {
-    // @> Vulnerability: Uses dynamic balance manipulation
-    uint256 amount = i_snow.balanceOf(receiver);
+function getMessageHash(address receiver) public view returns (bytes32) {
+    uint256 amount = i_snow.balanceOf(receiver); // @> Manipulatable via front-running
     return _hashTypedDataV4(keccak256(abi.encode(MESSAGE_TYPEHASH, SnowmanClaim({receiver: receiver, amount: amount}))));
-  }
-```
-
-### Risk
-Likelihood: Medium - Minimal cost (1 wei) to execute a front-running attack in the mempool.
-
-Impact: High - Permanent Denial-of-Service for targeted users attempting to claim via signature.
-
-### Proof of Concept
-This PoC simulates an attacker sending 1 wei to Alice after she signs her message, causing the subsequent claim transaction to revert:
-
-```solidity
-     function testDoSClaimSnowman() public {
-        bytes32 alDigest = airdrop.getMessageHash(alice);
-        (uint8 alV, bytes32 alR, bytes32 alS) = vm.sign(alKey, alDigest);
-        vm.prank(bob);
-        snow.transfer(alice, 1); // Front-run
-        vm.expectRevert();
-        airdrop.claimSnowman(alice, AL_PROOF, alV, alR, alS);
-     }
-```
-
-### Recommended Mitigation
-Pass `amount` as an explicit parameter to verify signatures against a fixed value rather than a dynamic balance.
-
-```solidity
-function claimSnowman(address receiver, uint256 amount, ...) external {
-    // Verify against fixed amount instead of balanceOf
-    bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(receiver, amount))));
 }
+```
+
+**Risk:** High (Likelihood: Medium / Impact: High). Targeted Denial-of-Service for signature-based claims at near-zero cost.
+
+**Proof of Concept:** Attacker sends 1 wei to Alice after she signs, causing her transaction to revert:
+```solidity
+function testDoS() public {
+    bytes32 digest = airdrop.getMessageHash(alice);
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(alKey, digest);
+    vm.prank(bob); snow.transfer(alice, 1); // Front-run
+    vm.expectRevert(); airdrop.claimSnowman(alice, proof, v, r, s);
+}
+```
+
+**Recommended Mitigation:** Pass `amount` as a parameter to ensure signatures are verified against a fixed value.
+```solidity
+function claimSnowman(address receiver, uint256 amount, ...) external { ... }
 ```
 
 ---
 
-## Submission Details: [L-01] Missing Claim Status Check Allows Multiple Claims
+## [L-01] Missing Claim Status Check Allows Multiple Claims
 
-### Title
-Missing Claim Status Check Allows Multiple Claims in SnowmanAirdrop.sol
-
-### Impact
-High
-
-### Likelihood
-Medium
-
-### Scope
-`src/SnowmanAirdrop.sol`
-
-### Description
-
-**Normal behavior:**
-Airdrops must enforce a one-time claim limit per eligible user.
-
-**Specific issue or problem:**
-The `claimSnowman` function lacks a check for the `s_hasClaimedSnowman` mapping, allowing eligible users to claim multiple times if they acquire more tokens.
+**Description:** `claimSnowman` updates `s_hasClaimedSnowman` but never checks it, allowing users to claim multiple times by acquiring more tokens.
 
 ```solidity
-// src/SnowmanAirdrop.sol
-    function claimSnowman(...) external {
-        // @> Vulnerability: Missing check if s_hasClaimedSnowman[receiver] is true
-        // ...
-        s_hasClaimedSnowman[receiver] = true;
-    }
-```
-
-### Risk
-Likelihood: Medium - Requires the user to acquire more tokens to satisfy the Merkle check again.
-
-Impact: High - Allows draining the NFT collection and breaks distribution rules.
-
-### Proof of Concept
-This test shows Alice claiming one NFT, acquiring more tokens, and successfully claiming a second NFT because the contract doesn't check her claim status:
-
-```solidity
-function testMultipleClaimsAllowed() public {
-    airdrop.claimSnowman(alice, AL_PROOF, v, r, s);
-    snow.earnSnow(); // Alice gets more tokens
-    airdrop.claimSnowman(alice, AL_PROOF, v2, r2, s2); // Succeeds
-    assert(nft.balanceOf(alice) == 2);
+function claimSnowman(...) external {
+    // @> Missing check for s_hasClaimedSnowman[receiver]
+    s_hasClaimedSnowman[receiver] = true;
 }
 ```
 
-### Recommended Mitigation
-Add a check at the beginning of the function to revert if the user has already claimed.
+**Risk:** High (Likelihood: Medium / Impact: High). Drains NFT supply and violates airdrop distribution rules.
 
+**Proof of Concept:** Alice successfully claims two NFTs by earning tokens between transactions:
+```solidity
+function testMultipleClaims() public {
+    airdrop.claimSnowman(alice, ...);
+    snow.earnSnow();
+    airdrop.claimSnowman(alice, ...); // Succeeds again
+}
+```
+
+**Recommended Mitigation:** Check the claim status mapping at the start of the function.
 ```diff
-+ if (s_hasClaimedSnowman[receiver]) revert SA__AlreadyClaimed();
++ if (s_hasClaimedSnowman[receiver]) revert AlreadyClaimed();
 ```
 
 ---
 
-## Submission Details: [L-02] Global Timer Reset in Snow::buySnow
+## [L-02] Global Timer Reset Blocks Free Claims
 
-### Title
-Global Timer Reset in Snow::buySnow Denies Free Claims for All Users
-
-### Impact
-High
-
-### Likelihood
-Medium
-
-### Scope
-`src/Snow.sol`
-
-### Description
-
-**Normal behavior:**
-Users should be able to earn free tokens independently once per week.
-
-**Specific issue or problem:**
-`buySnow` resets a global `s_earnTimer`. This blocks the `earnSnow` function for all users whenever any single user makes a purchase.
+**Description:** `buySnow` resets the global `s_earnTimer`, blocking `earnSnow` for all users whenever any single user makes a purchase.
 
 ```solidity
-// src/Snow.sol
-    function buySnow(uint256 amount) external payable canFarmSnow {
-        // @> Vulnerability: Resets global timer used by all users
-        s_earnTimer = block.timestamp;
-    }
+function buySnow(...) external payable {
+    s_earnTimer = block.timestamp; // @> Blocks everyone for 1 week
+}
 ```
 
-### Risk
-Likelihood: Medium - Any normal purchase resets the timer; a malicious user can block everyone for 1 wei.
+**Risk:** High (Likelihood: Medium / Impact: High). Complete suppression of the free claim mechanism.
 
-Impact: High - Complete suppression of the free claim mechanism for the entire protocol.
-
-### Proof of Concept
-This scenario shows how a purchase by User B prevents User A from earning tokens for another week:
-
+**Proof of Concept:** User B's purchase prevents User A from earning tokens for a week:
 ```solidity
-snow.buySnow(1); // User B buys
+snow.buySnow(1);
 vm.prank(userA);
-snow.earnSnow(); // Reverts due to global timer reset
+snow.earnSnow(); // Reverts
 ```
 
-### Recommended Mitigation
-Use a per-user mapping to track claim times, ensuring users' actions do not interfere with each other.
-
+**Recommended Mitigation:** Use a mapping to track `s_lastClaimTime` per user instead of a global timer.
 ```diff
 + mapping(address => uint256) private s_lastClaimTime;
-  function earnSnow() external {
--     if (block.timestamp < (s_earnTimer + 1 weeks)) revert S__Timer();
-+     if (block.timestamp < (s_lastClaimTime[msg.sender] + 1 weeks)) revert S__Timer();
-  }
+- if (block.timestamp < s_earnTimer + 1 weeks) revert();
++ if (block.timestamp < s_lastClaimTime[msg.sender] + 1 weeks) revert();
 ```
