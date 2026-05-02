@@ -1,0 +1,21 @@
+﻿python : usage: slither target [flag]
+No linha:1 caractere:1
++ python -m slither . --exclude-dependencies --exclude-informational -- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (usage: slither target [flag]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+target can be:
+	- file.sol // a Solidity file
+	- project_directory // a project directory. See https://github.com/crytic/crytic-compile/#crytic-compile for the 
+supported platforms
+	- 0x.. // a contract on mainnet
+	- NETWORK:0x.. // a contract on a different network. Supported networks: mainnet,sepolia,holesky,hoodi,bsc,testnet.bsc
+,poly,amoy.poly,base,sepolia.base,arbi,nova.arbi,sepolia.arbi,linea,sepolia.linea,blast,sepolia.blast,optim,sepolia.opt
+im,avax,testnet.avax,bttc,testnet.bttc,celo,sepolia.celo,frax,hoodi.frax,gno,mantle,sepolia.mantle,memecore,moonbeam,mo
+onriver,moonbase,opbnb,testnet.opbnb,scroll,sepolia.scroll,taiko,hoodi.taiko,era.zksync,sepoliaera.zksync,xdc,testnet.x
+dc,apechain,curtis.apechain,world,sepolia.world,sophon,testnet.sophon,sonic,testnet.sonic,unichain,sepolia.unichain,abs
+tract,sepolia.abstract,berachain,testnet.berachain,swellchain,testnet.swellchain,testnet.monad,hyperevm,katana,bokuto.k
+atana,sei,testnet.sei
+__main__.py: error: unrecognized arguments: --exclude-coding-conventions
