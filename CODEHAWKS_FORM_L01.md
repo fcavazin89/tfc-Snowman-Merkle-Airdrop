@@ -1,29 +1,67 @@
-## Description
-`claimSnowman` updates `s_hasClaimedSnowman` but never checks it, allowing users to claim multiple times by acquiring more tokens.
+# Description
+The `SnowmanAirdrop` contract is designed to distribute NFTs to eligible users. To ensure a fair distribution, airdrop mechanisms typically include a check to prevent the same address from claiming rewards multiple times.
+
+In the `claimSnowman` function, the contract correctly updates the `s_hasClaimedSnowman` mapping to `true` after a successful claim. However, the function fails to validate this state at the beginning of the execution.
 
 ```solidity
-function claimSnowman(...) external {
-    // @> Missing check for s_hasClaimedSnowman[receiver]
-    s_hasClaimedSnowman[receiver] = true;
-}
+// src/SnowmanAirdrop.sol
+
+    function claimSnowman(address receiver, bytes32[] calldata merkleProof, uint8 v, bytes32 r, bytes32 s)
+        external
+        nonReentrant
+    {
+        // @> Vulnerability: There is no check here to see if s_hasClaimedSnowman[receiver] is already true.
+        if (receiver == address(0)) {
+            revert SA__ZeroAddress();
+        }
+        // ... (claim logic)
+        s_hasClaimedSnowman[receiver] = true;
+    }
 ```
 
-## Risk
-Likelihood Medium: Requires the user to acquire more tokens to satisfy the Merkle check again.
-Impact High: Drains NFT supply and violates airdrop distribution rules.
+This oversight allows an eligible user to claim an NFT, acquire more Snow tokens (e.g., via the `earnSnow` or `buySnow` functions), and then successfully call `claimSnowman` again. As long as they have a valid Merkle proof for their new balance, the contract will process the second claim.
 
-## Proof of Concept
-Alice successfully claims two NFTs by earning tokens between transactions, because the contract does not verify her claim status:
+# Risk
+## Likelihood: Medium
+While it requires the user to acquire additional tokens between claims, this is easily achievable through the protocol's own mechanisms. Users motivated by profit can exploit this to accumulate a disproportionate share of the airdrop.
+
+## Impact: High
+The vulnerability allows for the unauthorized drainage of the NFT collection. It breaks the "one claim per user" economic model of the airdrop and results in an unfair distribution of assets.
+
+# Proof of Concept
+The following test demonstrates how Alice can bypass the claim limit. She claims her first NFT, waits a week to earn more Snow tokens, and then successfully claims a second NFT because the contract never checks if she has already participated.
+
 ```solidity
-function testMultipleClaims() public {
-    airdrop.claimSnowman(alice, ...);
+function testMultipleClaimsAllowed() public {
+    // Alice performs her first legitimate claim
+    vm.prank(alice);
+    airdrop.claimSnowman(alice, AL_PROOF, v, r, s);
+    assert(nft.balanceOf(alice) == 1);
+
+    // Alice acquires more tokens via the protocol's earn mechanic
+    vm.warp(block.timestamp + 1 weeks);
+    vm.prank(alice);
     snow.earnSnow();
-    airdrop.claimSnowman(alice, ...); // Succeeds again
+
+    // Alice successfully claims a SECOND NFT because her status isn't checked
+    vm.prank(alice);
+    airdrop.claimSnowman(alice, AL_PROOF, v2, r2, s2);
+    assert(nft.balanceOf(alice) == 2);
 }
 ```
 
-## Recommended Mitigation
-Check the claim status mapping at the start of the function.
+# Recommended Mitigation
+Add a conditional check at the start of the `claimSnowman` function to revert the transaction if the recipient has already claimed their NFT.
+
 ```diff
-+ if (s_hasClaimedSnowman[receiver]) revert AlreadyClaimed();
+// src/SnowmanAirdrop.sol
+
++ error SA__AlreadyClaimed();
+
+  function claimSnowman(...) external nonReentrant {
++     if (s_hasClaimedSnowman[receiver]) {
++         revert SA__AlreadyClaimed();
++     }
+      // ...
+  }
 ```
