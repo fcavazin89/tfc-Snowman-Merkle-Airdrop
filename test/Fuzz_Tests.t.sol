@@ -120,7 +120,7 @@ contract Fuzz_Tests is Test {
         // Setup: someone buys snow to get WETH into contract
         vm.prank(alice);
         weth.approve(address(snow), wethAmount);
-        
+
         // Give alice some WETH
         weth.mint(alice, wethAmount);
         vm.prank(alice);
@@ -145,7 +145,7 @@ contract Fuzz_Tests is Test {
     function testFuzz_ClaimSnowmanReentrancy(address receiver, uint256 amount) public {
         // This is a basic fuzz test to check if claim logic has issues
         // The actual reentrancy guard is in place (nonReentrant modifier)
-        
+
         vm.assume(receiver != address(0));
         amount = bound(amount, 1, 10);
 
@@ -180,7 +180,7 @@ contract Fuzz_Tests is Test {
         // Now the digest is invalid because balance changed
         //getMessageHash will return a different value
         bytes32 newDigest = airdrop.getMessageHash(receiver);
-        
+
         assertTrue(newDigest != digest); // Different balance = different hash
     }
 
@@ -197,10 +197,10 @@ contract Fuzz_Tests is Test {
         // First claim (simplified - would need proper signature)
         // After claim, s_hasClaimedSnowman is set
         // But the function doesn't CHECK this before proceeding
-        
+
         // If receiver gets more tokens, they might be able to claim again
         // (This is a design issue in the contract)
-        
+
         // Verify that hasClaimed mapping exists but isn't checked
         assertTrue(true); // Placeholder
     }

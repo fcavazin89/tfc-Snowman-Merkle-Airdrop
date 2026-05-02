@@ -116,9 +116,10 @@ contract SnowmanAirdrop is EIP712, ReentrancyGuard {
 
         uint256 amount = i_snow.balanceOf(receiver);
 
-        return _hashTypedDataV4(
-            keccak256(abi.encode(MESSAGE_TYPEHASH, SnowmanClaim({receiver: receiver, amount: amount})))
-        );
+        return
+            _hashTypedDataV4(
+                keccak256(abi.encode(MESSAGE_TYPEHASH, SnowmanClaim({receiver: receiver, amount: amount})))
+            );
     }
 
     // >>> GETTER FUNCTIONS
